@@ -21,6 +21,7 @@ const distube = new DisTube(client, {
 const { prefix } = require("./config.json");
 const colors = require("./colors.json");
 const { keepAlive } = require("./keepAlive");
+const { voicePermissionCheck: vcCheck, textPermissionCheck: textCheck } = require("./permissionCheck");
 
 /**
  * @param {String} name
@@ -56,6 +57,10 @@ client.on("messageCreate", async (message) => {
   )
     return;
 
+  if(!textCheck(message)) return;
+
+  // console.log(textCheck(message), vcCheck(message))
+
   const args = message.content.slice(prefix.length).trim().split(/ +/g);
   const command = args.shift();
 
@@ -78,6 +83,14 @@ client.on("messageCreate", async (message) => {
           embeds: [no_song_embed],
         });
       } else {
+        if(!vcCheck(message)) {
+          const cant_speak_embed = new MessageEmbed()
+            .setColor(colors.red)
+            .setDescription("❌ I require the `CONNECT` and `SPEAK` permissions! ❌")
+          return await message.reply({
+            embeds: [cant_speak_embed]
+          })
+        }
         await distube.play(vc, song, {
           message,
           textChannel: message.channel,
