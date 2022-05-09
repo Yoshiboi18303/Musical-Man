@@ -1,9 +1,11 @@
 # Privacy Policy
+
 Here's `Musical Man`'s Privacy Policy!
 
 ---
 
 # Chapters
+
 - 1. What We Collect
 - 2. How to contact the creator
 

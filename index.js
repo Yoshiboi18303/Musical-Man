@@ -20,8 +20,14 @@ const distube = new DisTube(client, {
 });
 const { prefix } = require("./config.json");
 const colors = require("./colors.json");
-const { keepAlive } = require("./keepAlive");
-const { voicePermissionCheck: vcCheck, textPermissionCheck: textCheck } = require("./permissionCheck");
+const {
+  voicePermissionCheck: vcCheck,
+  textPermissionCheck: textCheck,
+} = require("./permissionCheck");
+const logChannel = client.channels.cache.get("778354555430764615");
+
+global.path = require("path");
+global.client = client;
 
 /**
  * @param {String} name
@@ -42,10 +48,29 @@ function addField(name, value, inline) {
 
 client.on("ready", () => {
   console.log("The client is ready!".green);
-  keepAlive(process.env.PORT);
+  require("./app");
   client.user.setActivity({
     name: `music! - ${prefix}help`,
     type: "LISTENING",
+  });
+});
+
+client.on("guildCreate", async (guild) => {
+  if (!guild.available)
+    return await logChannel.send({
+      content: `The client joined a new guild, but the info on that guild is unavailable!\n\n**The new guild count for the client is ${client.guilds.cache.size}.**`,
+    });
+  const new_guild_embed = new MessageEmbed()
+    .setColor(colors.green)
+    .setTitle("New Guild!")
+    .setDescription(`${client.user.username} was added to a new guild!`)
+    .addFields([
+      addField("Guild Name", `**\`${guild.name}\`**`, true),
+      addField("Member Count", `**\`${guild.memberCount}\`**`, true),
+      addField("Guild Count", `**\`${client.guilds.cache.size}\`**`, true),
+    ]);
+  await logChannel.send({
+    embeds: [new_guild_embed],
   });
 });
 
@@ -57,7 +82,14 @@ client.on("messageCreate", async (message) => {
   )
     return;
 
-  if(!textCheck(message)) return;
+  if (!textCheck(message)) {
+    try {
+      await message.author.send({
+        content:
+          "I can't send messages in your guild, please check my permissions!",
+      });
+    } catch (e) {}
+  }
 
   // console.log(textCheck(message), vcCheck(message))
 
@@ -83,13 +115,15 @@ client.on("messageCreate", async (message) => {
           embeds: [no_song_embed],
         });
       } else {
-        if(!vcCheck(message)) {
+        if (!vcCheck(message)) {
           const cant_speak_embed = new MessageEmbed()
             .setColor(colors.red)
-            .setDescription("❌ I require the `CONNECT` and `SPEAK` permissions! ❌")
+            .setDescription(
+              "❌ I require the `CONNECT` and `SPEAK` permissions! ❌"
+            );
           return await message.reply({
-            embeds: [cant_speak_embed]
-          })
+            embeds: [cant_speak_embed],
+          });
         }
         await distube.play(vc, song, {
           message,
