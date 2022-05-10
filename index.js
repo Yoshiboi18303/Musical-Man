@@ -1,6 +1,6 @@
 console.clear();
 require("colors");
-const { Client, Intents, MessageEmbed } = require("discord.js");
+const { Client, Intents, MessageEmbed, Permissions } = require("discord.js");
 const client = new Client({
   intents: Object.values(Intents.FLAGS),
   allowedMentions: {
@@ -18,7 +18,7 @@ const distube = new DisTube(client, {
   searchSongs: 15,
   youtubeDL: false,
 });
-const { prefix } = require("./config.json");
+// const { prefix } = require("./config.json");
 const colors = require("./colors.json");
 const {
   voicePermissionCheck: vcCheck,
@@ -26,6 +26,8 @@ const {
 } = require("./permissionCheck");
 const logChannel = client.channels.cache.get("778354555430764615");
 const Fetch = require("./classes/Fetch");
+const mongoose = require("mongoose");
+const BotSettings = require("./schemas/botSetSchema");
 
 global.path = require("path");
 global.client = client;
@@ -48,13 +50,17 @@ function addField(name, value, inline) {
   };
 }
 
-client.on("ready", () => {
+client.on("ready", async () => {
   console.log("The client is ready!".green);
   require("./app");
   client.user.setActivity({
-    name: `music! - ${prefix}help`,
+    name: `music! - pm!help`,
     type: "LISTENING",
   });
+  mongoose
+    .connect(process.env.MONGO_CS)
+    .then(() => console.log("Connected to MongoDB!".green))
+    .catch((e) => console.error(`${e}`.red));
   var body = {
     servers: client.guilds.cache.size,
     shards: 1,
@@ -63,6 +69,7 @@ client.on("ready", () => {
     Fetcher.post(
       "https://api.infinitybotlist.com/bots/stats",
       {
+        "Content-Type": "application/json",
         Authorization: process.env.INFINITY_TOKEN,
       },
       body
@@ -90,12 +97,18 @@ client.on("guildCreate", async (guild) => {
 });
 
 client.on("messageCreate", async (message) => {
-  if (
-    message.author.bot ||
-    !message.content.startsWith(prefix) ||
-    !message.guild
-  )
-    return;
+  if (message.author.bot) return;
+  var Guild = await BotSettings.findOne({
+    guild: message.guild.id,
+  });
+  if (!Guild) {
+    Guild = new BotSettings({
+      guild: message.guild.id,
+    });
+    Guild.save();
+  }
+  const prefix = Guild.prefix;
+  if (!message.content.startsWith(prefix) || !message.guild) return;
 
   if (!textCheck(message)) {
     try {
@@ -613,6 +626,16 @@ client.on("messageCreate", async (message) => {
           `**Usage:** \`${prefix}resume\`,\n**Aliases:** None`,
           true
         ),
+        addField(
+          "Vote",
+          `**Usage:** \`${prefix}vote\`,\n**Aliases:** None`,
+          true
+        ),
+        addField(
+          "Prefix",
+          `**Usage:** \`${prefix}prefix [new prefix]\`,\n**Aliases:** None`,
+          true
+        )
       ])
       .setFooter({
         text: "Syntax: <> = required, [] = optional",
@@ -620,6 +643,69 @@ client.on("messageCreate", async (message) => {
     await message.reply({
       embeds: [help_embed],
     });
+  } else if (command == "vote") {
+    const vote_embed = new MessageEmbed()
+      .setColor(colors.green)
+      .setTitle(`Vote for ${client.user.username}!`)
+      .setDescription(`Vote for me to earn some stuff when that comes out!`)
+      .addFields([
+        addField(
+          "Infinity Bot List",
+          "[Click me!](https://infinitybots.gg/bots/971841942998638603/vote)",
+          true
+        ),
+      ]);
+    await message.reply({
+      embeds: [vote_embed],
+    });
+  } else if (command == "prefix") {
+    if (message.guild.id != "833671287381032970")
+      return await message.reply({
+        content: "This command is being tested currently!",
+      });
+    if (!message.member.permissions.has(Permissions.FLAGS.MANAGE_GUILD)) {
+      const invalid_permissions_embed = new MessageEmbed()
+        .setColor(colors.red)
+        .setDescription(
+          "❌ You need the `MANAGE_GUILD` permission to run this command! ❌"
+        );
+      return await message.reply({
+        embeds: [invalid_permissions_embed],
+      });
+    }
+    var npre = args[0];
+    if (!npre) {
+      const current_prefix_embed = new MessageEmbed()
+        .setColor(colors.yellow)
+        .setDescription(
+          `ℹ️ The current prefix of the bot is \`${prefix}\`. ℹ️`
+        );
+      return await message.reply({
+        embeds: [current_prefix_embed],
+      });
+    }
+    var data = await BotSettings.findOneAndUpdate(
+      {
+        guild: message.guild.id,
+      },
+      {
+        $set: {
+          prefix: npre,
+        },
+      }
+    );
+    data.save();
+    const done_embed = new MessageEmbed()
+      .setColor(colors.green)
+      .setDescription(
+        `✅ The prefix for **${message.guild.name}** has been updated from **\`${prefix}\`** to **\`${npre}\`** ✅`
+      );
+    await message.reply({
+      embeds: [done_embed],
+    });
+    if (message.guild.me.permissions.has(Permissions.FLAGS.CHANGE_NICKNAME)) {
+      await message.guild.me.setNickname(`[${npre}] ${client.user.username}`, "The prefix of the bot was changed.");
+    }
   }
 });
 
@@ -631,7 +717,6 @@ const status = (queue) =>
     queue.repeatMode ? (queue.repeatMode === 2 ? "Queue" : "This Song") : "Off"
   }\` | Autoplay: \`${queue.autoplay ? "On" : "Off"}\``;
 
-// DisTube event listeners, more in the documentation page
 distube
   .on("playSong", (queue, song) =>
     queue.textChannel?.send(
