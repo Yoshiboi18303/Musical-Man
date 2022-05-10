@@ -25,9 +25,11 @@ const {
   textPermissionCheck: textCheck,
 } = require("./permissionCheck");
 const logChannel = client.channels.cache.get("778354555430764615");
+const Fetch = require("./classes/Fetch");
 
 global.path = require("path");
 global.client = client;
+global.Fetcher = new Fetch();
 
 /**
  * @param {String} name
@@ -53,6 +55,19 @@ client.on("ready", () => {
     name: `music! - ${prefix}help`,
     type: "LISTENING",
   });
+  var body = {
+    servers: client.guilds.cache.size,
+    shards: 1,
+  };
+  console.log(
+    Fetcher.post(
+      "https://api.infinitybotlist.com/bots/stats",
+      {
+        Authorization: process.env.INFINITY_TOKEN,
+      },
+      body
+    )
+  );
 });
 
 client.on("guildCreate", async (guild) => {
@@ -84,11 +99,13 @@ client.on("messageCreate", async (message) => {
 
   if (!textCheck(message)) {
     try {
-      await message.author.send({
+      return await message.author.send({
         content:
           "I can't send messages in your guild, please check my permissions!",
       });
-    } catch (e) {}
+    } catch (e) {
+      return;
+    }
   }
 
   // console.log(textCheck(message), vcCheck(message))
