@@ -1,6 +1,12 @@
 console.clear();
 require("colors");
-const { Client, Intents, MessageEmbed, Permissions } = require("discord.js");
+const {
+  Client,
+  Intents,
+  MessageEmbed,
+  Permissions,
+  MessageAttachment,
+} = require("discord.js");
 const client = new Client({
   intents: Object.values(Intents.FLAGS),
   allowedMentions: {
@@ -14,7 +20,16 @@ const { SoundCloudPlugin } = require("@distube/soundcloud");
 const { SpotifyPlugin } = require("@distube/spotify");
 const { YtDlpPlugin } = require("@distube/yt-dlp");
 const distube = new DisTube(client, {
-  plugins: [new SoundCloudPlugin(), new SpotifyPlugin(), new YtDlpPlugin()],
+  plugins: [
+    new SoundCloudPlugin(),
+    new SpotifyPlugin({
+      api: {
+        clientId: process.env.SPOTIFY_CLIENT_ID,
+        clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
+      },
+    }),
+    new YtDlpPlugin(),
+  ],
   searchSongs: 15,
   youtubeDL: false,
 });
@@ -24,16 +39,20 @@ const {
   voicePermissionCheck: vcCheck,
   textPermissionCheck: textCheck,
 } = require("./permissionCheck");
-const logChannel = client.channels.cache.get("778354555430764615");
 const Fetch = require("./classes/Fetch");
 const mongoose = require("mongoose");
 const BotSettings = require("./schemas/botSetSchema");
+const shell = require("shelljs");
+const Fetcher = new Fetch();
+const wait = require("util").promisify(setTimeout)
 
 global.path = require("path");
 global.client = client;
-global.Fetcher = new Fetch();
+global.Fetcher = Fetcher;
+global.util = require("util");
 
 /**
+ * Returns an object for a Discord.js MessageEmbed field
  * @param {String} name
  * @param {String} value
  * @param {Boolean} inline
@@ -78,6 +97,7 @@ client.on("ready", async () => {
 });
 
 client.on("guildCreate", async (guild) => {
+  const logChannel = client.channels.cache.get("927333175582158959");
   if (!guild.available)
     return await logChannel.send({
       content: `The client joined a new guild, but the info on that guild is unavailable!\n\n**The new guild count for the client is ${client.guilds.cache.size}.**`,
@@ -97,7 +117,7 @@ client.on("guildCreate", async (guild) => {
 });
 
 client.on("messageCreate", async (message) => {
-  if (message.author.bot) return;
+  if (message.author.bot || !message.guild) return;
   var Guild = await BotSettings.findOne({
     guild: message.guild.id,
   });
@@ -108,7 +128,7 @@ client.on("messageCreate", async (message) => {
     Guild.save();
   }
   const prefix = Guild.prefix;
-  if (!message.content.startsWith(prefix) || !message.guild) return;
+  if (!message.content.startsWith(prefix)) return;
 
   if (!textCheck(message)) {
     try {
@@ -136,11 +156,11 @@ client.on("messageCreate", async (message) => {
         embeds: [no_vc_embed],
       });
     } else {
-      const song = args.join(" ");
-      if (!song) {
+      var song = args.join(" ");
+      if (!song && message.attachments.size <= 0) {
         const no_song_embed = new MessageEmbed()
           .setColor(colors.red)
-          .setDescription("❌ Please provide a song/url! ❌");
+          .setDescription("❌ Please provide a song/url/file! ❌");
         return await message.reply({
           embeds: [no_song_embed],
         });
@@ -154,6 +174,19 @@ client.on("messageCreate", async (message) => {
           return await message.reply({
             embeds: [cant_speak_embed],
           });
+        }
+        if(message.attachments.size > 0 && !song) {
+          var file = message.attachments.first();
+          // console.log(file.contentType)
+          if(!file.contentType.includes("audio") && !file.contentType.includes("video")) {
+            const invalid_file_embed = new MessageEmbed()
+              .setColor(colors.red)
+              .setDescription("❌ Please provide an audio file to read! ❌")
+            return await message.reply({
+              embeds: [invalid_file_embed]
+            })
+          }
+          song = file.url;
         }
         await distube.play(vc, song, {
           message,
@@ -488,6 +521,13 @@ client.on("messageCreate", async (message) => {
         embeds: [not_same_embed],
       });
     }
+    voice.leave();
+    const done_embed = new MessageEmbed()
+      .setColor(colors.green)
+      .setDescription("✅ Left the Voice Channel! ✅");
+    await message.reply({
+      embeds: [done_embed],
+    });
   } else if (command == "volume") {
     const vc = message.member.voice.channel;
     if (!vc) {
@@ -545,6 +585,7 @@ client.on("messageCreate", async (message) => {
     const np_embed = new MessageEmbed()
       .setColor(message.member.displayHexColor)
       .setTitle("Now Playing")
+      .setThumbnail(currentSong.thumbnail)
       .addFields([
         addField("Title", currentSong.name, true),
         addField("Requester", currentSong.user.username, true),
@@ -563,7 +604,7 @@ client.on("messageCreate", async (message) => {
       .addFields([
         addField(
           "Play",
-          `**Usage:** \`${prefix}play\` \`<song/url>\`\n**Aliases:** None`,
+          `**Usage:** \`${prefix}play\` \`<song/url/file>\`,\n**Aliases:** None`,
           true
         ),
         addField(
@@ -635,7 +676,7 @@ client.on("messageCreate", async (message) => {
           "Prefix",
           `**Usage:** \`${prefix}prefix [new prefix]\`,\n**Aliases:** None`,
           true
-        )
+        ),
       ])
       .setFooter({
         text: "Syntax: <> = required, [] = optional",
@@ -659,20 +700,12 @@ client.on("messageCreate", async (message) => {
       embeds: [vote_embed],
     });
   } else if (command == "prefix") {
+    /*
     if (message.guild.id != "833671287381032970")
       return await message.reply({
         content: "This command is being tested currently!",
       });
-    if (!message.member.permissions.has(Permissions.FLAGS.MANAGE_GUILD)) {
-      const invalid_permissions_embed = new MessageEmbed()
-        .setColor(colors.red)
-        .setDescription(
-          "❌ You need the `MANAGE_GUILD` permission to run this command! ❌"
-        );
-      return await message.reply({
-        embeds: [invalid_permissions_embed],
-      });
-    }
+    */
     var npre = args[0];
     if (!npre) {
       const current_prefix_embed = new MessageEmbed()
@@ -683,6 +716,24 @@ client.on("messageCreate", async (message) => {
       return await message.reply({
         embeds: [current_prefix_embed],
       });
+    }
+    if (!message.member.permissions.has(Permissions.FLAGS.MANAGE_GUILD)) {
+      const invalid_permissions_embed = new MessageEmbed()
+        .setColor(colors.red)
+        .setDescription(
+          "❌ You need the `MANAGE_GUILD` permission to run this command! ❌"
+        );
+      return await message.reply({
+        embeds: [invalid_permissions_embed],
+      });
+    }
+    if(npre.length > 18) {
+      const prefix_too_long_embed = new MessageEmbed()
+        .setColor(colors.red)
+        .setDescription("❌ Please input a prefix that is 18 characters or less! ❌")
+      return await message.reply({
+        embeds: [prefix_too_long_embed]
+      })
     }
     var data = await BotSettings.findOneAndUpdate(
       {
@@ -704,8 +755,204 @@ client.on("messageCreate", async (message) => {
       embeds: [done_embed],
     });
     if (message.guild.me.permissions.has(Permissions.FLAGS.CHANGE_NICKNAME)) {
-      await message.guild.me.setNickname(`[${npre}] ${client.user.username}`, "The prefix of the bot was changed.");
+      await message.guild.me.setNickname(
+        `[${npre}] ${client.user.username}`,
+        "The prefix of the bot was changed."
+      );
     }
+  } else if (command == "eval") {
+    if (message.author.id != "697414293712273408")
+      return await message.reply({
+        content: "You are **NOT** the owner of the bot!",
+      });
+    const code = args.join(" ");
+
+    var result = new Promise((resolve, reject) => {
+      resolve(eval(code));
+    });
+
+    var secrets = [
+      process.env.TOKEN,
+      process.env.KEY,
+      process.env.MONGO_CS,
+      process.env.FP_KEY,
+      client.token,
+      process.env.RADAR_KEY,
+      process.env.STATCORD_KEY,
+      process.env.BACKUP_DLS_API_KEY,
+      process.env.BOATS_KEY,
+      process.env.CLIENT_SECRET,
+      process.env.DEL_API_KEY,
+      process.env.DISCORDBOTLIST,
+      process.env.DISCORDLISTOLOGY,
+      process.env.INFINITY_API_TOKEN,
+      process.env.KEY_TO_MOTION,
+      process.env.MAIN_DLS_API_KEY,
+      process.env.SECRET,
+      process.env.SERVICES_API_KEY,
+      process.env.TEST_VOTE_WEBHOOK_TOKEN,
+      process.env.TOPGG_API_KEY,
+      process.env.VOTE_WEBHOOK_TOKEN,
+      process.env.WEBHOOK_AUTH,
+      process.env.PAT,
+    ];
+
+    result
+      .then(async (result) => {
+        if (typeof result !== "string")
+          result = util.inspect(result, { depth: 0 });
+
+        for (const term of secrets) {
+          if (
+            (result.includes(term) && term != undefined) ||
+            (result.includes(term) && term != null)
+          )
+            result = result.replace(term, "[SECRET]");
+        }
+        if (result.length > 2000) {
+          const buffer = Buffer.from(result);
+          var attachment = new MessageAttachment(buffer, "evaluated.js");
+          return await interaction.followUp({
+            content:
+              "The result is too long to show on Discord, so here's a file.",
+            files: [attachment],
+          });
+        }
+        const evaluated_embed = new MessageEmbed()
+          .setColor(colors.green)
+          .setTitle("Evaluation")
+          .setDescription(
+            `Successful Evaluation.\n\nOutput:\n\`\`\`js\n${result}\n\`\`\``
+          )
+          .setTimestamp();
+        try {
+          await message.reply({
+            embeds: [evaluated_embed],
+          });
+        } catch (e) {
+          return;
+        }
+      })
+      .catch(async (result) => {
+        if (typeof result !== "string")
+          result = util.inspect(result, { depth: 0 });
+
+        for (const term of secrets) {
+          if (
+            (result.includes(term) && term != undefined) ||
+            (result.includes(term) && term != null)
+          )
+            result = result.replace(term, "[SECRET]");
+        }
+
+        const error_embed = new MessageEmbed()
+          .setColor(colors.red)
+          .setTitle("Error Evaluating")
+          .setDescription(
+            `An error occurred.\n\nError:\n\`\`\`js\n${result}\n\`\`\``
+          )
+          .setTimestamp();
+        try {
+          await message.reply({ embeds: [error_embed] });
+        } catch (e) {
+          return;
+        }
+      });
+  } else if (command == "lyrics") {
+    return await message.reply({
+      content: "Coming soon!",
+    });
+    const song = args.join(" ");
+    if (!song) {
+      const no_song_embed = new MessageEmbed()
+        .setColor(colors.red)
+        .setDescription("❌ Please provide a song to find the lyrics of! ❌");
+      return await message.reply({
+        embeds: [no_song_embed],
+      });
+    }
+    var data = Fetcher.get(
+      `https://weebyapi.xyz/json/lyrics?query=${song}&token=${process.env.WEEBY_KEY}`
+    );
+    console.log(data);
+    await message.reply({
+      content: "Check the console!",
+    });
+  } else if (command == "exec") {
+    if (message.author.id != "697414293712273408")
+      return await message.reply({
+        content: "You are **NOT** the owner of the bot!",
+      });
+    const cmd = args.join(" ");
+    if (!cmd) {
+      const no_cmd_embed = new MessageEmbed()
+        .setColor(colors.red)
+        .setDescription("❌ Please provide a shell command to execute! ❌");
+      return await message.reply({
+        embeds: [no_cmd_embed],
+      });
+    }
+    var secrets = [
+      process.env.TOKEN,
+      process.env.BACKUP_DLS_API_KEY,
+      process.env.BOATS_KEY,
+      process.env.CLIENT_SECRET,
+      process.env.DEL_API_KEY,
+      process.env.DISCORDBOTLIST,
+      process.env.DISCORDLISTOLOGY,
+      process.env.FP_KEY,
+      process.env.INFINITY_API_TOKEN,
+      process.env.KEY,
+      process.env.KEY_TO_MOTION,
+      process.env.MAIN_DLS_API_KEY,
+      process.env.MONGO_CS,
+      process.env.RADAR_KEY,
+      process.env.SECRET,
+      process.env.SERVICES_API_KEY,
+      process.env.STATCORD_KEY,
+      process.env.TEST_VOTE_WEBHOOK_TOKEN,
+      process.env.TOPGG_API_KEY,
+      process.env.VOTE_WEBHOOK_TOKEN,
+      process.env.WEBHOOK_AUTH,
+      process.env.PAT,
+    ];
+    let output = shell.exec(cmd);
+    if (output == "" && output.stderr != "") {
+      output = `${output.stderr}`;
+    } else if ((output == "" && output.stderr == "") || output == "\n") {
+      output = "Command Completed (no output)";
+    } else if (output.length > 4096 || output.stderr.length > 4096) {
+      var buffer = Buffer.from(output);
+      var attachment = new MessageAttachment(buffer, "output.txt");
+      return await message.reply({
+        content: `The output wanting to be shown for \`${cmd}\` is too long to be shown on Discord, so here's a file.`,
+        files: [attachment],
+      });
+    }
+    for (const secret of secrets) {
+      if (output.includes(secret)) {
+        output = "[HIDDEN SECRET (Console Cleared!)]";
+        console.clear();
+      }
+    }
+    const executed_embed = new MessageEmbed()
+      .setColor(colors.orange)
+      .setTitle("Executed Callback")
+      .setDescription(
+        `This is what came back from your command...\n\nCommand: \`\`\`bash\n${cmd}\n\`\`\`\n\nOutput: \`\`\`\n${output}\n\`\`\``
+      )
+      .setFooter(
+        `${message.author.username} requested this.`,
+        message.author.displayAvatarURL({
+          dynamic: false,
+          format: "png",
+          size: 32,
+        })
+      )
+      .setTimestamp();
+    await message.reply({
+      embeds: [executed_embed],
+    });
   }
 });
 
@@ -722,7 +969,7 @@ distube
     queue.textChannel?.send(
       `Playing \`${song.name}\` - \`${
         song.formattedDuration
-      }\`\nRequested by: ${song.user}\n${status(queue)}`
+      }\`\nRequested by: ${song.user.username}\n${status(queue)}`
     )
   )
   .on("addSong", (queue, song) =>
