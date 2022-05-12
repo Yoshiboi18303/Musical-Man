@@ -19,6 +19,7 @@ const { DisTube } = require("distube");
 const { SoundCloudPlugin } = require("@distube/soundcloud");
 const { SpotifyPlugin } = require("@distube/spotify");
 const { YtDlpPlugin } = require("@distube/yt-dlp");
+const config = require("./config.json");
 const distube = new DisTube(client, {
   plugins: [
     new SoundCloudPlugin(),
@@ -41,10 +42,18 @@ const {
 } = require("./permissionCheck");
 const Fetch = require("./classes/Fetch");
 const mongoose = require("mongoose");
-const BotSettings = require("./schemas/botSetSchema");
+const BotSettings = require("./schemas/guildSchema");
 const shell = require("shelljs");
 const Fetcher = new Fetch();
-const wait = require("util").promisify(setTimeout)
+const wait = require("util").promisify(setTimeout);
+const { Client: StatcordClient } = require("statcord.js");
+const statcord = new StatcordClient({
+  client,
+  key: process.env.STATCORD_KEY,
+  postCpuStatistics: true,
+  postMemStatistics: true,
+  postNetworkStatistics: true,
+})
 
 global.path = require("path");
 global.client = client;
@@ -76,6 +85,7 @@ client.on("ready", async () => {
     name: `music! - pm!help`,
     type: "LISTENING",
   });
+  statcord.autopost()
   mongoose
     .connect(process.env.MONGO_CS)
     .then(() => console.log("Connected to MongoDB!".green))
@@ -84,17 +94,36 @@ client.on("ready", async () => {
     servers: client.guilds.cache.size,
     shards: 1,
   };
-  console.log(
-    Fetcher.post(
-      "https://api.infinitybotlist.com/bots/stats",
-      {
-        "Content-Type": "application/json",
-        Authorization: process.env.INFINITY_TOKEN,
-      },
-      body
-    )
+  Fetcher.post(
+    "https://api.infinitybotlist.com/bots/stats",
+    {
+      "Content-Type": "application/json",
+      Authorization: process.env.INFINITY_TOKEN,
+    },
+    body
   );
+  Fetcher.post(
+    `https://api.discordservices.net/bot/${client.user.id}/stats`,
+    {
+      Authorization: process.env.SERVICES_KEY,
+    },
+    body
+  );
+  body = {
+    server_count: client.guilds.cache.size,
+    shard_count: 1
+  }
+  Fetcher.post(`https://bots.discordlabs.org/v2/bot/${client.user.id}/stats`, { Authorization: process.env.DISCORD_LABS_KEY }, body)
 });
+
+statcord.on("autopost-start", () => {
+  console.log("Autoposting has started.".green)
+})
+
+statcord.on("post", (status) => {
+  if(!status) console.log("Successful Post!".green)
+  else console.error(`${status}`.red)
+})
 
 client.on("guildCreate", async (guild) => {
   const logChannel = client.channels.cache.get("927333175582158959");
@@ -128,6 +157,17 @@ client.on("messageCreate", async (message) => {
     Guild.save();
   }
   const prefix = Guild.prefix;
+  if (message.content == `<@${client.user.id}>`) {
+    const pinged_embed = new MessageEmbed()
+      .setColor(message.member.displayHexColor)
+      .setDescription(
+        `Hello <@${message.author.id}>, thanks for pinging me! Here's some helpful info!\n\n**My prefix in this guild:** \`${prefix}\`\n**See all commands:** \`${prefix}help\`\n**Invite the bot:** [Click me!](https://discord.com/oauth2/authorize?client_id=971841942998638603&permissions=412421053440&scope=bot)`
+      )
+      .setTimestamp();
+    return await message.reply({
+      embeds: [pinged_embed],
+    });
+  }
   if (!message.content.startsWith(prefix)) return;
 
   if (!textCheck(message)) {
@@ -146,6 +186,8 @@ client.on("messageCreate", async (message) => {
   const args = message.content.slice(prefix.length).trim().split(/ +/g);
   const command = args.shift();
 
+  await statcord.postCommand(command, message.author.id)
+  
   if (command == "play") {
     const vc = message.member.voice.channel;
     if (!vc) {
@@ -175,16 +217,19 @@ client.on("messageCreate", async (message) => {
             embeds: [cant_speak_embed],
           });
         }
-        if(message.attachments.size > 0 && !song) {
+        if (message.attachments.size > 0 && !song) {
           var file = message.attachments.first();
           // console.log(file.contentType)
-          if(!file.contentType.includes("audio") && !file.contentType.includes("video")) {
+          if (
+            !file.contentType.includes("audio") &&
+            !file.contentType.includes("video")
+          ) {
             const invalid_file_embed = new MessageEmbed()
               .setColor(colors.red)
-              .setDescription("❌ Please provide an audio file to read! ❌")
+              .setDescription("❌ Please provide an audio file to read! ❌");
             return await message.reply({
-              embeds: [invalid_file_embed]
-            })
+              embeds: [invalid_file_embed],
+            });
           }
           song = file.url;
         }
@@ -677,6 +722,11 @@ client.on("messageCreate", async (message) => {
           `**Usage:** \`${prefix}prefix [new prefix]\`,\n**Aliases:** None`,
           true
         ),
+        addField(
+          "Config",
+          `**Usage:** \`${prefix}config\` \`<action>\` \`<setting>\` \`[value (required for setting a setting)]\`,\n**Aliases:** None`,
+          true
+        ),
       ])
       .setFooter({
         text: "Syntax: <> = required, [] = optional",
@@ -727,13 +777,15 @@ client.on("messageCreate", async (message) => {
         embeds: [invalid_permissions_embed],
       });
     }
-    if(npre.length > 18) {
+    if (npre.length > 18) {
       const prefix_too_long_embed = new MessageEmbed()
         .setColor(colors.red)
-        .setDescription("❌ Please input a prefix that is 18 characters or less! ❌")
+        .setDescription(
+          "❌ Please input a prefix that is 18 characters or less! ❌"
+        );
       return await message.reply({
-        embeds: [prefix_too_long_embed]
-      })
+        embeds: [prefix_too_long_embed],
+      });
     }
     var data = await BotSettings.findOneAndUpdate(
       {
@@ -754,14 +806,17 @@ client.on("messageCreate", async (message) => {
     await message.reply({
       embeds: [done_embed],
     });
-    if (message.guild.me.permissions.has(Permissions.FLAGS.CHANGE_NICKNAME)) {
+    if (
+      message.guild.me.permissions.has(Permissions.FLAGS.CHANGE_NICKNAME) &&
+      (Guild.changeNickname || Guild.changeNickname == true)
+    ) {
       await message.guild.me.setNickname(
         `[${npre}] ${client.user.username}`,
         "The prefix of the bot was changed."
       );
     }
   } else if (command == "eval") {
-    if (message.author.id != "697414293712273408")
+    if (message.author.id != config.owner)
       return await message.reply({
         content: "You are **NOT** the owner of the bot!",
       });
@@ -858,28 +913,8 @@ client.on("messageCreate", async (message) => {
           return;
         }
       });
-  } else if (command == "lyrics") {
-    return await message.reply({
-      content: "Coming soon!",
-    });
-    const song = args.join(" ");
-    if (!song) {
-      const no_song_embed = new MessageEmbed()
-        .setColor(colors.red)
-        .setDescription("❌ Please provide a song to find the lyrics of! ❌");
-      return await message.reply({
-        embeds: [no_song_embed],
-      });
-    }
-    var data = Fetcher.get(
-      `https://weebyapi.xyz/json/lyrics?query=${song}&token=${process.env.WEEBY_KEY}`
-    );
-    console.log(data);
-    await message.reply({
-      content: "Check the console!",
-    });
   } else if (command == "exec") {
-    if (message.author.id != "697414293712273408")
+    if (message.author.id != config.owner)
       return await message.reply({
         content: "You are **NOT** the owner of the bot!",
       });
@@ -953,6 +988,245 @@ client.on("messageCreate", async (message) => {
     await message.reply({
       embeds: [executed_embed],
     });
+  } else if (command == "postnews") {
+    if (message.author.id != config.owner)
+      return await message.reply({
+        content: "You are **NOT** the owner of the bot!",
+      });
+    var error = args[0].toLowerCase();
+    var content = args.slice(1).join(" ");
+    if (!["yes", "no", "true", "false"].includes(error)) {
+      const invalid_answer_embed = new MessageEmbed()
+        .setColor(colors.red)
+        .setDescription(
+          "❌ Please provide an answer like `true`, `false`, `yes`, or `no`! ❌"
+        );
+      return await message.reply({
+        embeds: [invalid_answer_embed],
+      });
+    }
+    if (!content) {
+      const no_content_embed = new MessageEmbed()
+        .setColor(colors.red)
+        .setDescription("❌ Please provide some content for the news! ❌");
+      return await message.reply({
+        embeds: [no_content_embed],
+      });
+    }
+    error = error == "yes" || error == "true" ? true : false;
+    var data = Fetcher.post(
+      `https://api.discordservices.net/bot/${client.user.id}/news`,
+      { Authorization: process.env.SERVICES_KEY },
+      { title: "New News!", content, error }
+    );
+    await message.reply({
+      content: "News sent!",
+    });
+  } else if (command == "config") {
+    /*
+    if (message.guild.id != config.testServerId)
+      return await message.reply({
+        content:
+          "This command is under development and therefore is restricted to the testing server!",
+      });
+    */
+    if (!message.member.permissions.has(Permissions.FLAGS.MANAGE_GUILD)) {
+      const invalid_permissions_embed = new MessageEmbed()
+        .setColor(colors.red)
+        .setDescription(
+          "❌ You require the `MANAGE_GUILD` permission for this command! ❌"
+        );
+      return await message.reply({
+        embeds: [invalid_permissions_embed],
+      });
+    }
+    var action = args[0];
+    var setting = args[1];
+    var value = args.slice(2).join(" ") || undefined;
+    if (!["view", "set"].includes(action)) {
+      const invalid_action_embed = new MessageEmbed()
+        .setColor(colors.red)
+        .setDescription(
+          "❌ Please provide a valid action! ❌\n\nℹ️ **Valid actions are:** `view` or `set` ℹ️"
+        );
+      return await message.reply({
+        embeds: [invalid_action_embed],
+      });
+    }
+    if (!["dm", "changenick", "nickname"].includes(setting)) {
+      const invalid_setting_embed = new MessageEmbed()
+        .setColor(colors.red)
+        .setDescription(
+          "❌ Please provide a valid setting! ❌\n\nℹ️ **Valid settings are:** `dm`, `changenick` or `nickname` ℹ️"
+        );
+      return await message.reply({
+        embeds: [invalid_setting_embed],
+      });
+    }
+    if (action == "set" && !value) {
+      const no_value_embed = new MessageEmbed()
+        .setColor(colors.red)
+        .setDescription("❌ Please provide a value for this setting! ❌");
+      return await message.reply({
+        embeds: [no_value_embed],
+      });
+    }
+    switch (action) {
+      case "view":
+        const current_value_embed = new MessageEmbed()
+          .setColor(colors.orange)
+          .setTitle(`ℹ️ Current value for **\`${setting}\`** ℹ️`)
+          .setTimestamp();
+        switch (setting) {
+          case "dm":
+            current_value_embed.addField(
+              "Value",
+              `\`\`\`\n${Guild.dmUsers ? "Yes" : "No"}\n\`\`\``
+            );
+            await message.reply({
+              embeds: [current_value_embed],
+            });
+            break;
+          case "changenick":
+            current_value_embed.addField(
+              "Value",
+              `\`\`\`\n${Guild.changeNickname ? "Yes" : "No"}\n\`\`\``
+            );
+            await message.reply({
+              embeds: [current_value_embed],
+            });
+            break;
+          case "nickname":
+            current_value_embed.addField(
+              "Value",
+              `\`\`\`\n${message.guild.me.displayName}\n\`\`\``
+            );
+            await message.reply({
+              embeds: [current_value_embed],
+            });
+            break;
+        }
+        break;
+      case "set":
+        const new_value_embed = new MessageEmbed()
+          .setColor(colors.orange)
+          .setTitle(`New value for **\`${setting}\`**`)
+          .setTimestamp();
+        switch (setting) {
+          case "dm":
+            if (!["true", "false", "yes", "no"].includes(value)) {
+              const invalid_answer_embed = new MessageEmbed()
+                .setColor(colors.red)
+                .setDescription(
+                  "❌ Please provide an answer like `true`, `false`, `yes`, or `no`! ❌"
+                );
+              return await message.reply({
+                embeds: [invalid_answer_embed],
+              });
+            }
+            value = value == "true" || value == "yes" ? true : false;
+            var data = await BotSettings.findOneAndUpdate(
+              {
+                guild: message.guild.id,
+              },
+              {
+                $set: {
+                  dmUsers: value,
+                },
+              }
+            );
+            data.save();
+            new_value_embed.addFields([
+              addField(
+                "Old Value",
+                `\`\`\`\n${Guild.dmUsers ? "Yes" : "No"}\n\`\`\``,
+                true
+              ),
+              addField(
+                "New Value",
+                `\`\`\`\n${value ? "Yes" : "No"}\n\`\`\``,
+                true
+              ),
+            ]);
+            await message.reply({
+              embeds: [new_value_embed],
+            });
+            break;
+          case "changenick":
+            if (!["true", "false", "yes", "no"].includes(value)) {
+              const invalid_answer_embed = new MessageEmbed()
+                .setColor(colors.red)
+                .setDescription(
+                  "❌ Please provide an answer like `true`, `false`, `yes`, or `no`! ❌"
+                );
+              return await message.reply({
+                embeds: [invalid_answer_embed],
+              });
+            }
+            value = value == "true" || value == "yes" ? true : false;
+            var data = await BotSettings.findOneAndUpdate(
+              {
+                guild: message.guild.id,
+              },
+              {
+                $set: {
+                  changeNickname: value,
+                },
+              }
+            );
+            data.save();
+            new_value_embed.addFields([
+              addField(
+                "Old Value",
+                `\`\`\`\n${Guild.changeNickname ? "Yes" : "No"}\n\`\`\``,
+                true
+              ),
+              addField(
+                "New Value",
+                `\`\`\`\n${value ? "Yes" : "No"}\n\`\`\``,
+                true
+              ),
+            ]);
+            await message.reply({
+              embeds: [new_value_embed],
+            });
+            break;
+          case "nickname":
+            if (value.length > 32) {
+              const too_long_embed = new MessageEmbed()
+                .setColor(colors.red)
+                .setDescription(
+                  "❌ Please provide a nickname that is 32 characters or less! ❌"
+                );
+              return await message.reply({
+                embeds: [too_long_embed],
+              });
+            }
+            var old_value = message.guild.me.displayName;
+            if (
+              !message.guild.me.permissions.has(
+                Permissions.FLAGS.CHANGE_NICKNAME
+              )
+            ) {
+              const bad_permissions_embed = new MessageEmbed()
+                .setColor(colors.red)
+                .setDescription("❌ I can't change my own nickname! ❌");
+              return await message.reply({
+                embeds: [bad_permissions_embed],
+              });
+            }
+            await message.guild.me.setNickname(value);
+            new_value_embed.addFields([
+              addField("Old Value", `\`\`\`\n${old_value}\n\`\`\``, true),
+              addField("New Value", `\`\`\`\n${value}\n\`\`\``, true),
+            ]);
+            await message.reply({
+              embeds: [new_value_embed],
+            });
+            break;
+        }
+        break;
+    }
   }
 });
 

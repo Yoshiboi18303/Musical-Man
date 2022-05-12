@@ -21,6 +21,7 @@
     "node-superfetch": "^0.2.3",
     "path": "^0.12.7",
     "shelljs": "^0.8.5",
+    "statcord.js": "^3.4.2",
     "util": "^0.12.4"
   }
 }

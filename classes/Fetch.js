@@ -12,8 +12,8 @@ module.exports = class Fetch {
     if (!headers) headers = {};
     if (!(headers instanceof Object))
       throw new Error("The headers of a request must be an Object!");
-    const { body } = this.fetch.get(url).set(headers);
-    return body;
+    const req = this.fetch.get(url).set(headers);
+    return req;
   }
 
   /**
@@ -34,7 +34,7 @@ module.exports = class Fetch {
     if (!body) throw new Error("A post request needs a body!");
     if (!(body instanceof Object))
       throw new Error("The body of a POST request must be an Object!");
-    var { body } = this.fetch.post(url).set(headers).send(body);
-    return body;
+    var req = this.fetch.post(url).set(headers).send(body);
+    return req;
   }
 };
